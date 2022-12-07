@@ -1,0 +1,752 @@
+---
+title: "Assignment #1- Exploratory Data Analysis"
+author: 
+- "Philip Kuriakose"
+- "20832415"
+- "AFM 346"
+- "Professor Modjeska"
+date: "September 25, 2022"
+output: 
+    html_document: 
+      toc: yes
+      toc_float: yes
+      theme: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(include=TRUE, echo=TRUE, message=FALSE, warning=FALSE)
+```
+
+# **Introduction**
+
+```{r}
+# load the libraries
+
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(modeldata)
+library(lubridate)
+
+```
+
+## *On the original Ames data*
+
+-   The source of this data was from the Ames data set that was provided. We used the subset data regarding the houses
+-   We can get this from the "modeldata" package which made the data tidy and ready to use
+
+```{r}
+# load the data
+data(ames)
+
+houses <- ames %>%
+     # select some interesting columns
+    select(
+        Sale_Price, Lot_Frontage, Lot_Area, Gr_Liv_Area, Garage_Area, 
+        TotRms_AbvGrd, Year_Built, Year_Remod_Add, Neighborhood, Bldg_Type, 
+        House_Style, Overall_Cond, Functional, Year_Sold, Mo_Sold, Longitude,
+        Latitude
+    ) %>%
+    
+    # create a unique location from each pair of longitude and latitude values
+    mutate(Coordinates = str_c(Longitude, ' ', Latitude)) %>%
+    select(-Longitude, -Latitude) %>%
+    
+    # bin the built-years by decade
+    mutate(Decade_Built = Year_Built - (Year_Built %% 10)) %>%
+    
+    # combine the sale year and month into a sale date
+    # assume the first day of the month
+    mutate(Date_Sold = ymd(str_c(Year_Sold, '-', Mo_Sold, '-', '1'))) %>%
+    
+    # delete neighborhoods having fewer than three sales
+    group_by(Neighborhood) %>%
+    filter(n() > 2) %>%
+    ungroup()
+```
+
+## *On the houses data subset*
+
+-   Using the glimpse, we can see there are 2,927 rows and 18 columns
+-   These 18 columns are variables:
+
+1.  **Sale_Price**: This variable contains sales price of the houses sold in USD as an integer (ex. \$195,500 USD)
+2.  **Lot_Frontage**: This variable contains the linear feet of the street connected to property (ex. 141 ft)
+3.  **Lot_Area**: This variable contains the lot size in sqft (ex. 3177 sqft)
+4.  **Gr_Liv_Area**: This variable contains the living area above ground (ex. 1656 sqft)
+5.  **Garage_Area**: This variable contains the size of the garage in sqft (ex. 528 sqft)
+6.  **TotRms_AbvGrd**: This variable contains the total rooms above ground, not including bathrooms (ex. 7)
+7.  **Year_Built**: This variable contains the original construction date of the houses (ex. 1960)
+8.  **Year_Remod_Add**: This variable contains the date of the remodel, but if there was no remodel then the date is the same as the "Year_build" variable (ex. 1998)
+9.  **Neighborhood**: This variable contains the physical location within Ames city limits (ex. North Ames)
+10. **Bldg_Type**: This variable contains the type of dwelling (ex. OneFam = Single family detached)
+11. **House_Style**: This variable contains the style of dwelling (ex. One story = 1 story)
+12. **Overall_Cond**: This variables rates the overall condition of the house (ex. Average = 5)
+13. **Functional**: This variable show the home functionality (ex. Typ = Typical functionality)
+14. **Year_sold**: This variable contains the year the house was sold (ex. 2010)
+15. **Mo_sold**: This variable contains month the house was sold (ex. 5 = May)
+16. **Coordinates**: This variable contains the coordinates of where the house is located (ex. -93.619754)
+17. **Decade_Built**: This variable contains the decade the home was built (ex. 1960,1970,1980 etc.)
+18. **Date_Sold**: This variable contains the date the house was sold (ex. 2010-05-01 = May 1, 2010)
+
+```{r}
+glimpse(houses)
+tail(houses)
+```
+
+## Report introduction
+
+In this report I will be using the houses subset of the Ames dataset to conduct an exploratory data analysis. With the observations and variables provided. I will be talking about identifier/non-identifier variables. I will then be exploring these identifiers along with the qualitative and quantitative variables. After that I will explore the relationships between the variables. Finally, I will be generating questions regarding my discoveries and providing lots of visualizations throughout the report.
+
+# **Description of Variables**
+
+1.  In this data subset, the identifiers are: Year_Built, Year_Remod_Add, Neighborhood, Year_Sold, Mo_Sold, Coordinates, Decade_Built and Date_Sold
+
+2.  In this data subset, the qualitative non-identifiers are: Bldg_Type, House_Style, functional and Overall_Cond
+
+3.  In this data subset, the quantitative non-identifiers are: Sale_Price, Lot_Frontage, Lot_Area, Gr_liv_Area, Garage_Area and TotRms_AbvGrd
+
+```{r}
+#Check to make sure identifiers don't have any missing variables 
+houses %>% is.na() %>% colSums() 
+
+```
+
+No missing values in the variables
+
+# **Explore the Identifiers**
+
+## *Calculate the number of unique identifiers*
+
+```{r}
+unique_identifiers <- houses %>%
+  summarize(unique_Year_Built = n_distinct(Year_Built),
+            unique_Year_Remod_Add = n_distinct(Year_Remod_Add),
+            unique_Neighborhood = n_distinct(Neighborhood),
+            unique_Year_Sold = n_distinct(Year_Sold),
+            unique_Mo_Sold = n_distinct(Mo_Sold),
+            unique_Coordinates = n_distinct(Coordinates),
+            unique_Decade_Built = n_distinct(Decade_Built),
+            unique_Date_Sold = n_distinct(Date_Sold))
+          
+
+unique_identifiers %>%
+  kable()
+
+```
+
+## *List the unique values*
+
+```{r}
+#Year_Built
+unique_Year_Built <- houses %>% 
+  select(Year_Built) %>% 
+  unique() 
+##First 6
+head(unique_Year_Built) %>% #Refer to Appendix #1
+  kable()
+
+#Year_Remod_Add
+unique_Year_Remod_Add <- houses %>% 
+  select(Year_Remod_Add) %>% 
+  unique() 
+##First 6
+head(unique_Year_Remod_Add) %>% #Refer to Appendix #2
+  kable()
+
+#Neighborhood 
+unique_Neighborhood <- houses %>% 
+  select(Neighborhood) %>% 
+  unique() 
+unique_Neighborhood %>%
+  kable()
+
+#Year_Sold
+unique_Year_Sold <- houses %>% 
+  select(Year_Sold) %>% 
+  unique() 
+unique_Year_Sold %>%
+  kable()
+
+#Mo_Sold
+unique_Mo_Sold <- houses %>% 
+  select(Mo_Sold) %>% 
+  unique() 
+unique_Mo_Sold %>%
+  kable()
+
+#Coordinates
+unique_Coordinates <- houses %>% 
+  select(Coordinates) %>% 
+  unique() 
+##First 6
+head(unique_Coordinates) %>% #Refer to Appendix #3
+  kable()
+
+#Decade_Built
+unique_Decade_Built <- houses %>% 
+  select(Decade_Built) %>% 
+  unique() 
+unique_Decade_Built %>%
+  kable()
+
+#Date_Sold
+unique_Date_Sold <- houses %>% 
+  select(Date_Sold) %>% 
+  unique() 
+##First 6
+head(unique_Date_Sold) %>% #Refer to Appendix #4
+  kable()
+
+```
+
+**Missing variables were checked earlier in the report**
+
+## Should the identifiers be analyzed together, individually or both?
+
+-   I believe that some of the identifiers can be analyzed together and some can be analyzed individually
+-   The reason I believe they can be analyzed individually is because some of the identifiers don't depend on the other. For example, the year the house was built and the year the house was remodeled are not connected
+-   The reason I believe they can be analyzed together is because some of the identifiers correlate with each other. The year the house was sold and the month the house were sold are connected. Also, the coordinates and the neighborhood are also connected and can therefore these can be analyzed together.
+
+# **Explore the Qualitative Variables**
+
+## *Calculate the number of unique identifiers*
+
+```{r}
+unique_identifiers_qual <- houses %>%
+  summarize(unique_Bldg_Type = n_distinct(Bldg_Type),
+            unique_House_Style = n_distinct(House_Style),
+            unique_functional = n_distinct(Functional),
+            unique_Overall_Cond = n_distinct(Overall_Cond))
+          
+
+unique_identifiers_qual %>%
+  kable()
+```
+
+## *List the unique values*
+
+```{r}
+#Bldg_Type
+unique_Bldg_Type <- houses %>% 
+  select(Bldg_Type) %>% 
+  unique() 
+unique_Bldg_Type %>%
+  kable()
+
+#House_Style
+unique_House_Style <- houses %>% 
+  select(House_Style) %>% 
+  unique() 
+unique_House_Style %>% 
+  kable()
+
+#Functional 
+unique_Functional <- houses %>% 
+  select(Functional) %>% 
+  unique() 
+unique_Functional %>%
+  kable()
+
+#Overall_Cond
+unique_Overall_Cond <- houses %>% 
+  select(Overall_Cond) %>% 
+  unique() 
+unique_Overall_Cond %>%
+  kable()
+```
+
+**Missing variables were checked earlier in the report**
+
+# **Explore the Quantitative Variables**
+
+## *Summary statistics*
+
+```{r}
+#Sale_Price
+sum_stats_Sale_Price <- houses %>%
+  summarise(q1_Sale_Price = quantile(Sale_Price, 0.25),
+            med_Sale_Price = median(Sale_Price),
+            q2_Sale_Price = quantile(Sale_Price, 0.75),
+            min_Sale_Price = min(Sale_Price),
+            median_Sale_Price = median(Sale_Price),
+            max_Sale_Price = max(Sale_Price),
+            SD_Sale_Price = sd(Sale_Price),
+            IQR_Sale_Price = IQR(Sale_Price))
+
+sum_stats_Sale_Price %>%
+  kable() 
+```
+
+```{r}
+#Lot_Frontage
+sum_stats_Lot_Frontage <- houses %>%
+  summarise(q1_Lot_Frontage = quantile(Lot_Frontage, 0.25),
+            med_Lot_Frontage = median(Lot_Frontage),
+            q2_Lot_Frontage = quantile(Lot_Frontage, 0.75),
+            min_Lot_Frontage = min(Lot_Frontage),
+            median_Lot_Frontage = median(Lot_Frontage),
+            max_Lot_Frontage = max(Lot_Frontage),
+            SD_Lot_Frontage = sd(Lot_Frontage),
+            IQR_Lot_Frontage = IQR(Lot_Frontage))
+
+sum_stats_Lot_Frontage %>%
+  kable() 
+```
+
+```{r}
+#Lot_Area
+sum_stats_Lot_Area <- houses %>%
+  summarise(q1_Lot_Area = quantile(Lot_Area, 0.25),
+            med_Lot_Area = median(Lot_Area),
+            q2_Lot_Area = quantile(Lot_Area, 0.75),
+            min_Lot_Area = min(Lot_Area),
+            median_Lot_Area = median(Lot_Area),
+            max_Lot_Area = max(Lot_Area),
+            SD_Lot_Area = sd(Lot_Area),
+            IQR_Lot_Area = IQR(Lot_Area))
+
+sum_stats_Lot_Area %>%
+  kable() 
+```
+
+```{r}
+#Gr_liv_Area
+sum_stats_Gr_liv<- houses %>%
+  summarise(q1_Gr_liv_Area = quantile(Gr_Liv_Area, 0.25),
+            med_Gr_liv_Area = median(Gr_Liv_Area),
+            q2_Gr_liv_Area = quantile(Gr_Liv_Area, 0.75),
+            min_Gr_liv_Area = min(Gr_Liv_Area),
+            median_Gr_liv_Area = median(Gr_Liv_Area),
+            max_Gr_liv_Area = max(Gr_Liv_Area),
+            SD_Gr_liv_Area = sd(Gr_Liv_Area),
+            IQR_Gr_liv_Area = IQR(Gr_Liv_Area))
+
+sum_stats_Gr_liv %>%
+  kable() 
+```
+
+```{r}
+#Garage_Area
+sum_stats_Garage_Area<- houses %>%
+  summarise(q1_Garage_Area = quantile(Garage_Area, 0.25),
+            med_Garage_Area = median(Garage_Area),
+            q2_Garage_Area = quantile(Garage_Area, 0.75),
+            min_Garage_Area = min(Garage_Area),
+            median_Garage_Area = median(Garage_Area),
+            max_Garage_Area = max(Garage_Area),
+            SD_Garage_Area = sd(Garage_Area),
+            IQR_Garage_Area = IQR(Garage_Area))
+
+sum_stats_Garage_Area %>%
+  kable() 
+```
+
+```{r}
+#TotRms_AbvGrd
+sum_stats_TotRms_AbvGrd<- houses %>%
+  summarise(q1_TotRms_AbvGrd = quantile(TotRms_AbvGrd, 0.25),
+            med_TotRms_AbvGrd = median(TotRms_AbvGrd),
+            q2_TotRms_AbvGrd = quantile(TotRms_AbvGrd, 0.75),
+            min_TotRms_AbvGrd = min(TotRms_AbvGrd),
+            median_TotRms_AbvGrd = median(TotRms_AbvGrd),
+            max_TotRms_AbvGrd = max(TotRms_AbvGrd),
+            SD_TotRms_AbvGrd = sd(TotRms_AbvGrd),
+            IQR_TotRms_AbvGrd = IQR(TotRms_AbvGrd))
+
+sum_stats_TotRms_AbvGrd %>%
+  kable() 
+```
+
+## *Calculate each of the statistics above grouped by building type*
+
+```{r}
+#Sale_Price
+sum_stats_Sale_Price <- houses %>%
+  group_by(Bldg_Type) %>%
+  summarise(q1_Sale_Price = quantile(Sale_Price, 0.25),
+            med_Sale_Price = median(Sale_Price),
+            q2_Sale_Price = quantile(Sale_Price, 0.75),
+            min_Sale_Price = min(Sale_Price),
+            median_Sale_Price = median(Sale_Price),
+            max_Sale_Price = max(Sale_Price),
+            SD_Sale_Price = sd(Sale_Price),
+            IQR_Sale_Price = IQR(Sale_Price))
+
+sum_stats_Sale_Price %>%
+  kable() 
+```
+
+```{r}
+#Lot_Frontage
+sum_stats_Lot_Frontage <- houses %>%
+  group_by(Bldg_Type) %>%
+  summarise(q1_Lot_Frontage = quantile(Lot_Frontage, 0.25),
+            med_Lot_Frontage = median(Lot_Frontage),
+            q2_Lot_Frontage = quantile(Lot_Frontage, 0.75),
+            min_Lot_Frontage = min(Lot_Frontage),
+            median_Lot_Frontage = median(Lot_Frontage),
+            max_Lot_Frontage = max(Lot_Frontage),
+            SD_Lot_Frontage = sd(Lot_Frontage),
+            IQR_Lot_Frontage = IQR(Lot_Frontage))
+
+sum_stats_Lot_Frontage %>%
+  kable() 
+```
+
+```{r}
+#Lot_Area
+sum_stats_Lot_Area <- houses %>%
+  group_by(Bldg_Type) %>%
+  summarise(q1_Lot_Area = quantile(Lot_Area, 0.25),
+            med_Lot_Area = median(Lot_Area),
+            q2_Lot_Area = quantile(Lot_Area, 0.75),
+            min_Lot_Area = min(Lot_Area),
+            median_Lot_Area = median(Lot_Area),
+            max_Lot_Area = max(Lot_Area),
+            SD_Lot_Area = sd(Lot_Area),
+            IQR_Lot_Area = IQR(Lot_Area))
+
+sum_stats_Lot_Area %>%
+  kable() 
+```
+
+```{r}
+#Gr_Liv_Area
+sum_stats_Gr_liv<- houses %>%
+  group_by(Bldg_Type) %>%
+  summarise(q1_Gr_liv_Area = quantile(Gr_Liv_Area, 0.25),
+            med_Gr_liv_Area = median(Gr_Liv_Area),
+            q2_Gr_liv_Area = quantile(Gr_Liv_Area, 0.75),
+            min_Gr_liv_Area = min(Gr_Liv_Area),
+            median_Gr_liv_Area = median(Gr_Liv_Area),
+            max_Gr_liv_Area = max(Gr_Liv_Area),
+            SD_Gr_liv_Area = sd(Gr_Liv_Area),
+            IQR_Gr_liv_Area = IQR(Gr_Liv_Area))
+
+sum_stats_Gr_liv %>%
+  kable() 
+```
+
+```{r}
+#Garage_Area
+sum_stats_Garage_Area<- houses %>%
+  group_by(Bldg_Type) %>%
+  summarise(q1_Garage_Area = quantile(Garage_Area, 0.25),
+            med_Garage_Area = median(Garage_Area),
+            q2_Garage_Area = quantile(Garage_Area, 0.75),
+            min_Garage_Area = min(Garage_Area),
+            median_Garage_Area = median(Garage_Area),
+            max_Garage_Area = max(Garage_Area),
+            SD_Garage_Area = sd(Garage_Area),
+            IQR_Garage_Area = IQR(Garage_Area))
+
+sum_stats_Garage_Area %>%
+  kable() 
+```
+
+```{r}
+#TotRms_AbvGrd
+sum_stats_TotRms_AbvGrd<- houses %>%
+  group_by(Bldg_Type) %>%
+  summarise(q1_TotRms_AbvGrd = quantile(TotRms_AbvGrd, 0.25),
+            med_TotRms_AbvGrd = median(TotRms_AbvGrd),
+            q2_TotRms_AbvGrd = quantile(TotRms_AbvGrd, 0.75),
+            min_TotRms_AbvGrd = min(TotRms_AbvGrd),
+            median_TotRms_AbvGrd = median(TotRms_AbvGrd),
+            max_TotRms_AbvGrd = max(TotRms_AbvGrd),
+            SD_TotRms_AbvGrd = sd(TotRms_AbvGrd),
+            IQR_TotRms_AbvGrd = IQR(TotRms_AbvGrd))
+
+sum_stats_TotRms_AbvGrd %>%
+  kable() 
+```
+
+## *Outliters*
+
+```{r}
+Outliers_Sale_Price <- houses %>%
+ggplot(aes(y = Sale_Price)) +
+geom_boxplot() +
+ggtitle('Sale Price BoxPlot') + 
+  coord_flip()
+
+Outliers_Sale_Price
+```
+
+From the boxplot for the variable, Sale_Price, suggest there are outliers
+
+```{r}
+Outliers_Lot_Frontage <- houses %>%
+ggplot(aes(y = Lot_Frontage)) +
+geom_boxplot() +
+ggtitle('Lot Frontage BoxPlot') + 
+  coord_flip()
+
+Outliers_Lot_Frontage
+```
+
+From the boxplot for the variable, Lot_Frontage, suggest there are outliers
+
+```{r}
+Outliers_Lot_Area <- houses %>%
+ggplot(aes(y = Lot_Area)) +
+geom_boxplot() +
+ggtitle('Lot Area BoxPlot') + 
+  coord_flip()
+
+Outliers_Lot_Area
+```
+
+From the boxplot for the variable, Lot_Frontage, suggest there are outliers
+
+```{r}
+Outliers_Gr_Liv_Area <- houses %>%
+ggplot(aes(y = Gr_Liv_Area)) +
+geom_boxplot() +
+ggtitle('Living Area Above Ground BoxPlot') + 
+  coord_flip()
+
+Outliers_Gr_Liv_Area
+```
+
+From the boxplot for the variable, Gr_Liv_Area, suggest there are outliers
+
+```{r}
+Outliers_Garage_Area <- houses %>%
+ggplot(aes(y = Garage_Area)) +
+geom_boxplot() +
+ggtitle('Ground Area BoxPlot') + 
+  coord_flip()
+
+Outliers_Garage_Area
+```
+
+From the boxplot for the variable, Garage_Area, suggest there are outliers
+
+```{r}
+Outliers_TotRms_AbvGrd <- houses %>%
+ggplot(aes(y = TotRms_AbvGrd)) +
+geom_boxplot() +
+ggtitle('Total Rooms Above Ground BoxPlot') + 
+  coord_flip()
+
+Outliers_TotRms_AbvGrd
+```
+
+From the boxplot for the variable, TotRms_AbvGrd, suggest there are outliers
+
+## *Histograms*
+
+```{r}
+#Sale_Price
+houses %>% 
+  ggplot(aes(x = Sale_Price)) +
+  ggtitle('Sales Price Histogram') +
+  geom_histogram(color="black", fill="white", binwidth = 1000) +
+  scale_x_continuous(labels = scales::dollar_format()) 
+
+```
+
+```{r}
+#Lot_Frontage
+houses %>% 
+  ggplot(aes(x = Lot_Frontage)) +
+  geom_histogram(color="black", fill="white", binwidth = 5) +
+  labs(title = "Lot Frontage Histogram",
+         x = 'Lot Frontage (sqft)',
+         y = 'Count')
+```
+
+```{r}
+#Lot_Area
+houses %>% 
+  ggplot(aes(x = Lot_Area)) +
+  geom_histogram(color="black", fill="white", binwidth = 1000) +
+  labs(title = "Lot Area Histogram",
+         x = 'Lot Area (sqft)',
+         y = 'Count')
+```
+
+```{r}
+#Gr_liv_Area
+houses %>% 
+  ggplot(aes(x = Gr_Liv_Area)) +
+  geom_histogram(color="black", fill="white", binwidth = 100) +
+   labs(title = "Living Area Above Ground Histogram",
+         x = 'Living Area Above Ground (sqft)',
+         y = 'Count')
+```
+
+```{r}
+#Garage_Area
+houses %>% 
+  ggplot(aes(x = Garage_Area)) +
+  geom_histogram(color="black", fill="white", binwidth = 10) +
+ labs(title = "Garage Area Histogram",
+         x = 'Garage Area (sqft)',
+         y = 'Count')
+```
+
+```{r}
+#TotRms_AbvGrd
+houses %>% 
+  ggplot(aes(x = TotRms_AbvGrd)) +
+  geom_histogram(color="black", fill="white", binwidth = 1) +
+ labs(title = "Total Rooms Above Ground Histogram",
+         x = 'Total Rooms Above Ground',
+         y = 'Count')
+```
+
+## *Scatter plots*
+
+```{r}
+#Sale_Price
+houses %>%
+    ggplot(aes(x = Decade_Built, y = Sale_Price)) + 
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = 'y ~ x', method = 'lm') +
+    facet_wrap(vars(Neighborhood), ncol = 5) +
+      scale_y_continuous(labels = scales::dollar_format())  +
+    labs(title = "Distribution of Sale Price by Neighborhood and Decade Built",
+         x = '',
+         y = '')
+```
+
+For the sales price variable we should look into the neighborhoods in which the sales prices have stayed the same over the decades, for example, Sawyer. This raises concerns because over the decades house prices have soared and if the prices stayed the same then we should find out why.
+
+```{r}
+#Lot_Frontage
+houses %>%
+    ggplot(aes(x = Decade_Built, y = Lot_Frontage)) + 
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = 'y ~ x', method = 'lm') +
+    facet_wrap(vars(Neighborhood), ncol = 5) +
+    labs(title = "Distribution of Lot Frontage (sqft) by Neighborhood and Decade Built",
+         x = '',
+         y = '')
+```
+
+```{r}
+#Lot_Area
+houses %>%
+    ggplot(aes(x = Decade_Built, y = Lot_Area)) + 
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = 'y ~ x', method = 'lm') +
+    facet_wrap(vars(Neighborhood), ncol = 5) +
+    labs(title = "Distribution of Lot Area (sqft) by Neighborhood and Decade Built",
+         x = '',
+         y = '')
+```
+
+```{r}
+#Gr_liv_Area
+houses %>%
+    ggplot(aes(x = Decade_Built, y = Gr_Liv_Area)) + 
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = 'y ~ x', method = 'lm') +
+    facet_wrap(vars(Neighborhood), ncol = 5) +
+    labs(title = "Distribution of Living Area Above Ground (sqft) by Neighborhood and Decade Built",
+         x = '',
+         y = '')
+```
+
+```{r}
+#Garage_Area
+houses %>%
+    ggplot(aes(x = Decade_Built, y = Garage_Area)) + 
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = 'y ~ x', method = 'lm') +
+    facet_wrap(vars(Neighborhood), ncol = 5) +
+    labs(title = "Distribution of Garage Area (sqft) by Neighborhood and Decade Built",
+         x = '',
+         y = '')
+```
+
+For the four variables above that are related to the area and sqft of the houses, we should be focusing on the ones that reduce in sqft over time. We could compare it to the sales prices to make sure that they are increasing/decreasing in a correlated manner with the sqft. If they are not we should further investigate into why this is happening.
+
+```{r}
+#TotRms_AbvGrd
+houses %>%
+    ggplot(aes(x = Decade_Built, y = TotRms_AbvGrd)) + 
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = 'y ~ x', method = 'lm') +
+    facet_wrap(vars(Neighborhood), ncol = 5) +
+    labs(title = "Distribution of Total Rooms Above Ground by Neighborhood and Decade Built",
+         x = '',
+         y = '')
+```
+
+For the total rooms above ground variable we should be focusing on the number of rooms and making sure that it makes sense with the sqft and the sales price. We should watch to see if there are things like very small rooms being built in houses to allow for more renters, like they typically do for student housing. This could then help determine the real value of these rooms and see if the sales prices makes sense.
+
+A neighborhood that we should do some investigating on is Timberland. I see a trend with the sales prices going down over the decades but the area and rooms also decreasing. We should find out why this is and try to fix this problem by digging deeper and with more data.
+
+# **Explore the Relationships between Variables**
+
+## *Correlation between sales price and living areas*
+
+```{r}
+houses %>%
+    select(Sale_Price, Gr_Liv_Area) %>%
+    cor()
+```
+
+From this we see that the correlation between Sale Price and Ground living is strong!
+
+```{r}
+houses %>%
+    ggplot(aes(x = Sale_Price, y = Gr_Liv_Area, color = Bldg_Type)) +
+    geom_point(alpha = 0.5) + 
+    facet_wrap(vars(Decade_Built), ncol = 3) +
+    scale_x_continuous(labels = scales::dollar_format()) +
+    labs(title = "Sales Prive vs Ground Living Area",
+         subtitle = "By Decade Built and Building Type",
+         x = 'Sale Price',
+         y = 'Ground Living Area')
+```
+
+From this chart we can see that there are far less houses in 1870 and as the decades went on, more and more houses were built. But we see a hault in 2010 with not as many plots. This may be due to lack of data. In terms of the sales prices we see that there wasn't much variety in the prices of the buildings but as time went on there were more and more in the \$100k+ range. We can also see in terms of the ground living area that the size of these buildings has always increased a lot over the years. This makes sense because in the 1870's there was a lot less infrastructure and machinery that could be used to build houses when comparing to the 2000's. I can also see that over time there is more types of buildings being built. In the 1870's there seems to be only single family detaches. But over time there were many different types of buildings (ex. Townhouse Inside Unit). It seems to be also evident that there is a good correlation between the ground living area and the sales price. For the most part the correlation between them follows; the higher the sales price the more living ground area. We can see an upward linear trend when looking at most the decades after the 1900's. But one variation that can be seen between the decades built and buildings type is, as mentioned, in the 2010's there seems to be a similar amount of houses as in the 1870's. This could be due to a lack of data, but we can't know for sure without further investigating this problem.
+
+# **Conclusion**
+
+Some questions that I have after doing this analysis:
+
+1.  When looking at the scatter plots that compares the sales price and ground living area by decade built and building type, I realized there was an upward trend in sales prices and the ground level area. There is also a clear increase in the building types. How come in 2010 there was very little plots compared to the other decades?
+
+2.  In the scatter plots which compare the sales price and neighborhood to the decades, why are there some neighborhoods with decreases in sales price? We should look into the neighborhood Timberland, as mentioned in the report, the sales prices goes down over the decades but the area and rooms are also decreasing.
+
+3.  How many of these houses are student houses or group homes? For these types of houses there is a trend where the sales prices are lower and the total number of rooms is larger. This data can help potential renters see if there room is worth it or not.
+
+# **Appendix**
+
+```{r}
+#1
+unique_Year_Built <- houses %>% 
+  select(Year_Built) %>% 
+  unique() 
+
+unique_Year_Built %>%
+  kable()
+
+#2
+unique_Year_Remod_Add <- houses %>% 
+  select(Year_Remod_Add) %>% 
+  unique() 
+unique_Year_Remod_Add %>%
+  kable()
+
+#3
+unique_Coordinates <- houses %>% 
+  select(Coordinates) %>% 
+  unique() 
+unique_Coordinates %>%
+  kable()
+
+#4
+unique_Date_Sold <- houses %>% 
+  select(Date_Sold) %>% 
+  unique() 
+unique_Date_Sold %>% #Refer to Appendix #4
+  kable()
+```
