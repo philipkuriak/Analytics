@@ -1,0 +1,750 @@
+---
+title: "Linear Regression Using Sale Price from House Attributes"
+author: "Philip Kuriakose"
+output: 
+    html_document: 
+      toc: yes
+      toc_float: yes
+      theme: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE)
+
+```
+
+# **Introduction**
+
+-   This data gives us information relating to the sales price's and
+    attributes relating to houses
+
+    -   The objective is to create a model that uses the attributes of
+        the houses and predict the sales price
+
+-   Since we work for the bank the objective is to use the predictions
+    and compare them to what these houses have been appraised for 
+
+    -   We would have to set materiality and make sure that the sales
+        prices make sense
+
+    -   The results we are looking for are the ones where the appraisal
+        is far off from the prediction (not trivial) and we would do a
+        deeper dive into why this might be, this may result in a further
+        investigation from the bank
+
+-   In the "ames" dataset, there are 74 variables, but we will be using
+    7 variables in this case and has 2,930 observations, we will call
+    this sub-set "houses"
+
+-   We believe the relevant variables to be used for this preliminary
+    investigation are the:
+
+    -   Sales price (sales price of the houses sold in USD as an
+        integer)
+
+    -   The lot frontage (linear feet of the street connected to
+        property)
+
+    -   Lot area (lot size in sqft)
+
+    -   Ground living area (contains the living area above ground)
+
+    -   Garage area (contains the size of the garage in sqft)
+
+    -   Total rooms above ground (contains the total rooms above ground,
+        not including bathrooms)
+
+    -   Year built (contains the original construction date of the
+        houses)
+
+ 
+
+-   Modeling process:
+
+    -   We will start with our exploratory data analysis (EDA)
+
+    -   From here we will split the data into; training, validation and
+        test sets
+
+    -   Then, we will start by creating the KNN model for both the
+        training and validation sets. We will be using 3 different
+        models (with different neighbors) and comparing there metrics to
+        see which KNN model performance the best
+
+    -   After that we will do the same thing as the previous step, but
+        this time use linear regression instead of KNN to find the best
+        performing model
+
+    -   After we have 1 model from KNN and 1 model from linear
+        regression, we will compare these models using the testing data
+
+    -   Finally, we will be choosing which model performance the best
+        between these 2 and using it 
+
+ 
+
+-   Brief Conclusion: 
+
+    -   After completing the modeling process I was able to determine
+        the best performing model as the KNN model with 4 neighbors
+        (model 1)
+
+    -   The R\^2 was strong and all the metrics out performed the best
+        model from the linear regression model
+
+    -   There are also some optimistic metrics that we may want to
+        consider removing due to the risk of overfitting  Exploratory
+        Data Analysis
+
+## Exploratory Data Analysis
+
+```{r}
+# load the data
+library(modeldata)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(modeldata)
+library(lubridate)
+library(GGally)
+library(tidymodels)
+library(ISLR)
+library(yardstick)
+
+
+
+
+data(ames)
+
+# preprocess the data
+houses <- ames %>%
+    # select some useful numeric columns
+    select(Sale_Price, Lot_Frontage, Lot_Area, Gr_Liv_Area, Garage_Area, TotRms_AbvGrd, Year_Built)
+
+glimpse(houses)
+```
+
+*We can create a long pivot table to better see the first 5 observations
+of the variables*
+
+```{r}
+#Houses Pivot Table
+houses_long <- houses %>%
+    pivot_longer(cols = everything(),    
+                 names_to = 'variable',
+                 values_to = 'value')
+
+head(houses_long, n = 5)
+```
+
+*We can create a histogram to see the distribution of the variables*
+
+```{r}
+#Historgram
+houses_long %>%
+    ggplot(aes(x = value)) +
+    geom_histogram(bins = 50) +
+    facet_wrap(vars(variable), scales = 'free') +  
+    labs(title = "Distribution of Houses Variables")
+```
+
+-   The distribution of these variables are not centered for the most
+    part, the variable that is distributed the best is the garage area
+
+*We can then create a pairwise table of scatter plots and correlations
+to see how well these variables work together*
+
+```{r}
+#Correlation of Variables 
+Saleprice <- Sale_Price
+houses %>%
+    ggpairs()  #gives quick glance at important relationships 
+```
+- From the sales curve we can see that some sales are higher than other
+
+-   We should compare the sales price, which is the independent variable
+    (prediction), to the dependent variables (response)
+
+-   We can start by comparing the correlation of sales price to the
+    other variables
+
+    -   **Sale's price & Lot frontage**: This correlation is weak and
+        positive -
+
+    -   **Sale's price & Lot area**: This correlation is weak and
+        positive
+
+    -   **Sale's price & Ground living area**: This correlation is
+        strong and positive
+
+    -   **Sale's price & Garage area**: This correlation is moderate and
+        positive 
+
+    -   **Sale's price & Total rooms above ground**: This correlation is
+        moderate and positive
+
+-   We can also examine the dependent variables that have a weak
+    correlation (we know this because they don't have asterisk beside
+    them): 
+
+    -   **Year built & Lot frontage** 
+
+    -   **Year built & Lot area**
+
+-   When I look at the scatter plots I see that most of the variables
+    have a positive linear relationship with the variable sales price
+
+    -   This is an indication that these variables can be used for the
+        model
+
+## Training, Validation and Testing Data
+
+-   Typically we would split the model between training data and testing
+    data
+
+    -   The training data is usually greater than the testing data (ex.
+        70:30 split)
+
+-   We use the training data to elaborate our model (ex. create new
+    variables, train algorithm, compare models etc.) and we use the
+    testing data to estimate an unbiased assessment of the model's
+    performance
+
+-   Validation sets are used to measure performance of the training
+    data, before using the testing data
+
+    -   They are either a subset of the training set or a third
+        allocation in the initial split of the data
+
+```{r}
+set.seed(3051)
+
+houses_split <- initial_split(houses, 
+                                prop = 0.7,
+                                strata = Sale_Price)
+#Tibble
+other_data <- training(houses_split)
+test_data <- testing(houses_split)
+
+set.seed(8427)
+
+other_split <- initial_split(other_data,
+                             prop = 0.7,
+                             strata = Sale_Price)
+#Tibble
+training_data <- training(other_split)
+validation_data <- testing(other_split)
+
+```
+
+-   When we set the "prop" to 0.7; we are telling the data that we want
+    70% of the data to retained for training
+-   When we set the "strata" to *Sale_Price*; we are selecting the
+    variable in the data that will be used to conduct stratified
+    sampling
+    -   I chose the Sale_Price because this is the prediction variable/
+        independent variable
+
+## Performance Metrics
+
+-   RMSE -\> Shows how much the prediction differs from the true values,
+    with extra weight for large differences (accuracy)
+
+-   R\^2 -\> Shows the proportion of variance in the response that is
+    explained in the model (consistency/correlation)
+
+-   MAE -\> Shows the average differences between predictions and the
+    true values, but unlike RMSE, no square rooting and no squaring (no
+    extra weight on large difference)
+
+ 
+
+-   I would choose the R\^2 metric for optimizing the model training
+    process and selecting among possible models, because with the
+    training data we want to make sure that there is a relationship with
+    the variables so we can; develop feature sets, train our algorithm,
+    tune hyperparameters, compare models etc. 
+
+-   This is so we can choose the final model that we will be using our
+    testing data on
+
+# **KNN**
+
+*Create 3 models with different neighbors*
+
+```{r}
+# Model 1 (neighbors = 4)
+knn_model_1 <-
+    nearest_neighbor(neighbors = 4) %>%
+    set_engine("kknn") %>%
+    set_mode("regression")
+
+# Model 2 (neighbors = 8)
+knn_model_2 <-
+    nearest_neighbor(neighbors = 8) %>%
+    set_engine("kknn") %>%
+    set_mode("regression")
+
+# Model 3 (neighbors = 12)
+knn_model_3 <-
+    nearest_neighbor(neighbors = 12) %>%
+    set_engine("kknn") %>%
+    set_mode("regression")
+
+```
+
+## **Prediction**
+
+**Training Data**
+
+*Fit the models to the 3 different KNN models using all the variables on
+the training data*
+
+```{r}
+knn_1_fit <-
+    knn_model_1 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = training_data)
+
+knn_1_fit
+
+```
+
+```{r}
+knn_2_fit <-
+    knn_model_2 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = training_data)
+
+knn_2_fit
+```
+
+```{r}
+knn_3_fit <-
+    knn_model_3 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = training_data)
+
+knn_3_fit
+```
+
+*Predict the 3 different models using the training data and create the
+metrics table by combining all the models on one table*
+
+```{r}
+predict_knn_train_1 <- predict(knn_1_fit, new_data = training_data) %>%
+    rename(y_predict_1 = .pred)
+
+predict_knn_train_2 <- predict(knn_2_fit, new_data = training_data) %>%
+    rename(y_predict_2 = .pred)
+
+predict_knn_train_3 <- predict(knn_3_fit, new_data = training_data) %>%
+    rename(y_predict_3 = .pred)
+
+training_data_1 <- training_data %>%
+    bind_cols(predict_knn_train_1,
+              predict_knn_train_2,
+              predict_knn_train_3)
+
+options(scipen = 100, digits = 4)
+
+metrics_knn_training_1 <- metrics(training_data_1, truth = Sale_Price, estimate = y_predict_1) %>%
+  mutate(k = 4,
+         dataset = 'training')
+
+metrics_knn_training_2 <- metrics(training_data_1, truth = Sale_Price, estimate = y_predict_2) %>%
+  mutate(k = 8,
+         dataset = 'training')
+
+metrics_knn_training_3 <- metrics(training_data_1, truth = Sale_Price, estimate = y_predict_3) %>%
+  mutate(k = 12,
+         dataset = 'training')
+
+metrics_knn_training <- bind_rows(metrics_knn_training_1,
+                               metrics_knn_training_2,
+                               metrics_knn_training_3)
+
+metrics_knn_training_wide <- metrics_knn_training %>%
+    pivot_wider(names_from = .estimator,
+                 values_from = .estimate)
+
+metrics_knn_training_wide %>% kable(caption = "Training Metrics- KNN", digits = 2)
+
+```
+
+**Validation Data**
+
+*Fit the models to the 3 different KNN models using all the variables on
+the validation data*
+
+```{r}
+knn_1_fit_v <-
+    knn_model_1 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = validation_data)
+
+knn_1_fit_v
+```
+
+```{r}
+knn_2_fit_v <-
+    knn_model_2 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = validation_data)
+
+knn_2_fit_v
+```
+
+```{r}
+knn_3_fit_v <-
+    knn_model_3 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = validation_data)
+
+knn_3_fit_v
+```
+
+*Predict the 3 different models using the validation data and create the
+metrics table by combining all the models on one table*
+
+```{r}
+predict_knn_val_1 <- predict(knn_1_fit_v, new_data = validation_data) %>%    
+    rename(y_predict_1_v = .pred)
+
+predict_knn_val_2 <- predict(knn_2_fit_v, new_data = validation_data) %>%
+    rename(y_predict_2_v = .pred)
+
+predict_knn_val_3 <- predict(knn_3_fit_v, new_data = validation_data) %>%
+    rename(y_predict_3_v = .pred)
+
+validation_data_1 <- validation_data %>%
+    bind_cols(predict_knn_val_1,
+              predict_knn_val_2,
+              predict_knn_val_3)
+
+options(scipen = 100, digits = 4)
+
+metrics_knn_val_1 <- metrics(validation_data_1, truth = Sale_Price, estimate = y_predict_1_v) %>%
+  mutate(k = 4,
+         dataset = 'validation')
+
+metrics_knn_val_2 <- metrics(validation_data_1, truth = Sale_Price, estimate = y_predict_2_v) %>%
+  mutate(k = 8,
+         dataset = 'validation')
+
+metrics_knn_val_3 <- metrics(validation_data_1, truth = Sale_Price, estimate = y_predict_3_v) %>%
+  mutate(k = 12,
+         dataset = 'validation')
+
+metrics_knn_validation <- bind_rows(metrics_knn_val_1,
+                               metrics_knn_val_2,
+                               metrics_knn_val_3)
+
+metrics_knn_val_wide <- metrics_knn_validation %>%
+    pivot_wider(names_from = .estimator,
+                 values_from = .estimate)
+
+metrics_knn_val_wide %>% kable(caption = "Validation Metrics- KNN", digits = 2)
+```
+
+## **Visualize the KNN Performance**
+
+*Combine the training and validation metrics*
+
+```{r}
+knn_metrics <- bind_rows(metrics_knn_val_wide, metrics_knn_training_wide) 
+
+```
+
+*Create the visualization for the KNN models using both the training and
+validation sets*
+
+```{r}
+knn_metrics %>%
+    ggplot(aes(x = k, y = standard, color = dataset)) +
+    geom_point() +
+    geom_line() +
+    facet_wrap(vars(.metric), scales = 'free_y') +
+    labs(title = 'Performance of KNN Models',
+         x = 'Number of Neighbors (k)',
+         y = 'Metric Value')
+
+```
+
+-   The validation and training metrics relatively follow the same
+    pattern;
+
+    -   ex. The training model with the highest R square is the same for
+        the validation model
+
+-   Based on the R\^2 metric, which I said was the best metric to use
+    for optimizing the model training process and selecting among
+    possible models, the best performing model is model #1 on the
+    training data set
+
+-   This model is the one where the neighbors equals "4"
+
+-   For the training data the metric is between 0.9 and 1 which means
+    that there is consistency and correlation. It also shows that the
+    model fits well, but there is a risk of it being overfitting, which
+    we won't know until further investigation
+
+# **Linear Regression**
+
+*Create the linear regression model with the appropriate computational engine*
+
+```{r}
+lm_model <-
+    linear_reg() %>%
+    set_mode("regression") %>%
+    set_engine("lm")
+
+lm_model
+```
+
+## *Training*
+
+*Fit the model on the training data*
+
+```{r}
+lm_fit <-
+    lm_model %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = training_data)
+
+lm_fit
+```
+
+*Display the model estimates, standard errors, and p-values for the linear regression model using the training data*
+
+```{r}
+tidy(lm_fit) %>%
+    kable(digits=4)
+```
+
+-   The standard error indicates how uncertain the estimates are
+
+    -   When looking at the standard error and the estimates, we can see
+        the estimates are bigger, meaning that none of the variables are
+        weak
+
+    -   If std.error divided by the estimate was greater than 1, then
+        the model would be too weak and needs revision
+
+-   When looking at the p-values we can see that none of them exceed our
+    significance threshold of 0.01, therefore none of the variables seem
+    statistically insignificant
+
+-   Therefore, we will not be taking any of the predictors out
+
+*Fit the model on the training data again*
+
+```{r}
+#Fit Model
+lm_fit_1 <-
+    lm_model %>%
+  fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = training_data)
+
+lm_fit_1
+```
+
+*Predict the linear regression models using the training data and create the metrics table by combining all the models on one table*
+
+```{r}
+predict_lm_train <- predict(lm_fit_1, new_data = training_data) 
+
+training_data_multi <- training_data %>%
+    bind_cols(predict_lm_train)
+
+options(scipen = 100, digits = 4)
+
+metrics_lm_training <- metrics(training_data_multi, truth = Sale_Price, estimate = .pred) %>%
+  mutate(dataset = 'training')
+
+metrics_lm_training_wide <- metrics_lm_training %>%
+    pivot_wider(names_from = .estimator,
+                 values_from = .estimate)
+
+metrics_lm_training_wide %>% 
+  kable(caption = "Training Metrics- Multiple Linear Regression", digits = 2)
+```
+
+## *Validation*
+
+*Fit the model on the validation data*
+
+```{r}
+lm_fit_v <-
+    lm_model %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = validation_data)
+
+lm_fit_v
+```
+
+*Display the model estimates, standard errors, and p-values for the
+linear regression model using the validation data*
+
+```{r}
+tidy(lm_fit_v) %>%
+    kable(digits=4)
+```
+
+-   From looking at this table we can see that the estimates are greater
+    than the st.error, so the model is not weak
+
+-   When looking at the p.value we can see that the Lot_Area should be
+    removed from the model because it is above the significance
+    threshold of 0.1
+
+*Fit Model- With no insignificant predictors*
+
+```{r}
+lm_fit_v1 <-
+    lm_model %>%
+    fit(Sale_Price ~ Lot_Frontage + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = validation_data)
+
+lm_fit_v1
+```
+
+*Predict the linear regression models using the validation data and
+create the metrics table by combining all the models on one table*
+
+```{r}
+predict_lm_val <- predict(lm_fit_v1, new_data = validation_data) 
+
+validation_data_multi <- validation_data %>%
+    bind_cols(predict_lm_val)
+
+options(scipen = 100, digits = 4)
+
+metrics_lm_validation <- metrics(validation_data_multi, truth = Sale_Price, estimate = .pred) %>%
+  mutate(dataset = 'validation')
+
+metrics_lm_validation_wide <- metrics_lm_validation %>%
+    pivot_wider(names_from = .estimator,
+                 values_from = .estimate)
+
+metrics_lm_validation_wide %>% 
+  kable(caption = "Validation Metrics- Multiple Linear Regression", digits = 2)
+```
+
+-   When comparing the linear regression metrics with the training data
+    vs the validation data, we can see that the R\^2 for the validation
+    data is slightly better
+
+-   This means when using the validation data the model has more
+    consistency and it would a better use for our model
+
+-   *Side note*: The RMSE and the MAE are also lower in the validation
+    data, meaning that this model will also be more accurate as well
+
+# **Select, Train, and Test the Final Model**
+
+*Fit the best KNN (model #1) on "other_data"; which contains the
+training and the validation data*
+
+```{r}
+knn_other_fit <-
+    knn_model_1 %>%
+    fit(Sale_Price ~ Lot_Frontage + Lot_Area + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = other_data)
+
+knn_other_fit
+```
+
+*Fit the best linear regression model on "other_data"; which contains
+the training and the validation data*
+
+```{r}
+lm_other_fit <-
+    lm_model %>%
+    fit(Sale_Price ~ Lot_Frontage + Gr_Liv_Area + Garage_Area + TotRms_AbvGrd + Year_Built, data = other_data)
+
+lm_other_fit
+  
+```
+
+*Predict the models using the test data and create the metrics table by
+combining both the models on one table*
+
+```{r}
+predict_knn_other <- predict(knn_other_fit, new_data = test_data) %>%
+    rename(y_predict_1 = .pred)
+
+predict_lm_other <- predict(lm_other_fit, new_data = test_data) %>%
+    rename(y_predict_2 = .pred)
+
+test_data_fit <- test_data %>%
+    bind_cols(predict_knn_other,
+              predict_lm_other)
+
+options(scipen = 100, digits = 4)
+
+metrics_knn_testing <- metrics(test_data_fit, truth = Sale_Price, estimate = y_predict_1) %>%
+  mutate(model = 'KNN')
+
+metrics_lm_testing <- metrics(test_data_fit, truth = Sale_Price, estimate = y_predict_2) %>%
+  mutate(model = 'lm')
+
+metrics_testing <- bind_rows(metrics_knn_testing,
+                               metrics_lm_testing)
+
+metrics_testing_wide <- metrics_testing %>%
+    pivot_wider(names_from = .estimator,
+                 values_from = .estimate)
+
+metrics_testing_wide %>% kable (caption = "Testing Metrics", digits = 2)
+
+```
+
+# **Conclusion**
+
+-   The model I would recommend for the bank management would be the KNN
+    model with 4 neighbors (model 1). This is because when using the
+    test data we can see it has the strongest R\^2
+
+    -   The R\^2 is 0.76 which would mean it is a relatively strong
+        correlation
+
+-   The RMSE and MAE are also lower for the KNN model in comparison with
+    the linear regression model, which would mean the KNN model is more
+    accurate as well
+
+-   I would make a different recommendation if I see that the model is
+    under fitting on a graph, since the number of neighbors is only 4
+
+    -   This would mean that there is more bias and the model doesn't
+        catch subtle trends in the data
+
+-   When comparing the performance metrics from the 3 sets, between the
+    training and validation metrics, we see that on the KNN visual that
+    for model 1 of the training data may be too optimistic
+
+    -   This had an R\^2 of around 0.95, which if rounded would be 0.1
+
+    -   This would mean that the model may over fit the data badly
+
+-   The validation set is crucial to use because we need it to measure
+    performance before testing it
+
+    -   If we only predict the training set sample it will be over fit
+        (optimistic)
+
+-   If we only use one validation set then the model wouldn't be able to
+    predict as well on the testing set because the validation is only a
+    small portion of the data overall
+
+    -   Also in the future when we get new data, the model won't be able
+        to accurately predict with the data
+
+-   To avoid this issue we can use cross validation to check whether
+    they're over fitting the data without predicting on the testing data
+
+-   The ground living area and the sales price have the strongest
+    correlations as mentioned earlier in the report when we examined the
+    pairwise table of scatter plots and correlation
+
+-   Therefore when we are using the model and getting the various
+    attributes, we should put an emphasis on the importance of the
+    ground living area as our best predictor so our model can be further
+    accurate
+    
+    - We can use poly() to make the linear data more flexible and will improve the model 

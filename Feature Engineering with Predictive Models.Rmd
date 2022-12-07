@@ -1,0 +1,925 @@
+---
+title: "Feature Engineering with Predictive Models"
+author: "Philip Kuriakose"
+output: 
+    html_document: 
+      toc: yes
+      toc_float: yes
+      theme: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE, warning = TRUE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(GGally)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(modeldata)
+library(yardstick)
+library(doParallel)
+
+
+```
+
+# **Introduction**
+
+*Describe the problem and the data*
+
+-   Due to an increase in energy prices in the 1970's, countries now
+    need to save energy and find better ways to conserve it
+
+-   The steel industry is one of the industries that use the most energy
+
+    -   We want to try to predict consumption by using our predictor
+        variables
+
+-   The outcome variable in this model will be the Kilowatt-hours
+    "Usage" variable
+
+*Include a short preview of your conclusions and key recommendations*
+
+-   After completing these tests and creating both a linear regression
+    and KNN model, I have concluded that the best model to use would be
+    the linear regression model
+-   The linear regression model with 0 penalties and 0.75 mixture would
+    be the best and I know that based on the metrics, giving emphasis to
+    RMSE because it tells us the accuracy with extra wright for large
+    differences
+
+*Introduce the rest of your report*
+
+-   We will start with the Exploratory Data Analysis to find which
+    variables are the best with the data and to see if any changes need
+    to be made to the variables/fit
+
+-   We will then prepare the model by splitting the data into both
+    testing and training data
+
+    -   Using the training data we will perform the cross validation
+
+-   We will also be creating 3 recipes to use;
+
+    -   One of them will just have a dummy for all qualitative variables
+
+    -   The next one will have the dummy as well as a step to
+        standardize all predictors
+
+    -   The final recipe will have what the above two have, plus a step
+        to perform a basis of expansion
+
+-   After this, we will create both the KNN and linear regression models
+    to assess which one of the two creates the best model
+
+-   Finally, we will fit the best model on the training data and assess
+    the performance with the test data
+
+# **EDA**
+
+*Variables in this data set can be found in the glimpse function below*
+
+```{r}
+set.seed(1234)
+
+steel_energy <- read_csv("Steel_industry_data.csv") %>%    
+  mutate(date = as.numeric(dmy_hm(date))) %>%
+  rename(Lag_Cur_React_Power = Lagging_Current_Reactive.Power_kVarh,
+           Lead_Cur_React_Power = Leading_Current_Reactive_Power_kVarh,
+           Lag_Cur_Power_Fct = Lagging_Current_Power_Factor,
+           Lead_Cur_Power_Fct = Leading_Current_Power_Factor,
+           CO2 = `CO2(tCO2)`,
+           Usage = Usage_kWh,
+           Week_Status = WeekStatus) %>%
+    
+    # sample a third of the data randomly
+    sample_frac(0.33)
+
+glimpse(steel_energy)
+```
+
+## Summary Statistics
+
+*To see which variables are quantitative*
+
+```{r}
+steel_energy %>% 
+  select(where(is.numeric))
+```
+
+-   I have decided not to the date variable in the summary statistics
+
+-   From the statistics below some of the key observations are:
+
+    -   The max usage is 149.18 KWH
+
+    -   From the standard deviation shows that the predictor variables
+        are all fairly low
+
+        -   This means that there is less risk and they are clustered
+            closely together, which is good for our model
+
+```{r}
+steel_sum_stat <- steel_energy %>%
+    pivot_longer(cols = c(Usage, Lag_Cur_React_Power, Lead_Cur_React_Power, CO2, Lag_Cur_Power_Fct, Lead_Cur_Power_Fct, NSM),
+                 names_to = 'Metric_Name',
+                 values_to = 'Metric_Value') %>%
+  group_by(Metric_Name) %>%
+  summarise(Min = min(Metric_Value),
+            Max = max(Metric_Value),
+            Q1 = quantile(Metric_Value, 0.25),
+            Median = median(Metric_Value),
+            Q3 = quantile(Metric_Value, 0.75),
+            Mean = mean(Metric_Value),
+            SD = sd(Metric_Value),
+            IQR = IQR(Metric_Value))
+
+options(scipen = 100, digits = 4)
+
+steel_sum_stat %>%
+  kable()
+```
+
+## Pairs Plot
+
+```{r fig.width=12, fig.height=8}
+steel_energy %>%
+  ggpairs()
+```
+
+-   Looking at this pairs plot we can compare both numeric and visual
+    outputs
+
+    -   When comparing the usage (outcome variable) with the predictors
+        we can see that there are a few relationships where the
+        correlation is strong:
+
+        1\. Usage and CO2 have a very strong positive relationship
+        (0.988)
+
+        2\. Usage and Lag_Cur_React_Power have a strong positive
+        relationship (0.895)
+
+        3\. Usage and Lead_Cur_React_Power have a negative weak
+        relationship (-0.326)
+
+        4\. Lag_Cur_Power_Fct, Lead_Cur_Power_Fct and NSM have a
+        positive weak relationship with Usage
+
+    -   When comparing the visual outcomes, we can see that the usage
+        variable has some outliers when creating a box plot with
+        Week_Status, Day_of_week and Load_Type
+
+-   From this we know that we have opportunities to capitalize on the
+    correlations between the predictor variables and the outcome
+    variables in our model
+
+-   Some challenges we have will be outliers in our data with certain
+    variables, which we may have to remove before fitting the model
+
+-   Another challenge is that certain variables seem to have a big
+    distribution between the outcomes in the variables (ex. a lot more
+    "yes's" than "no's"
+
+# **Prepare the Modeling**
+
+## Performance Metrics
+
+-   In this assignment, the metric I expect to give me the most useful
+    results is the RMSE
+    -   My reasoning behind this is because we want to know the accuracy
+        of the model by giving us the difference in predictions and true
+        values on average, which is useful when creating a prediction
+        model using machine learning, like we must do in this case
+
+    -   With RMSE there is also extra weight for large difference (in
+        comparison to MAE), and for this model we want to create, we
+        want as little error as possible so it works well
+
+    -   The R\^2 gives us the consistency which we already get from the
+        correlation above
+
+```{r}
+my_metrics <- metric_set(mae, rmse, rsq)
+```
+
+## Data Splitting and CV Folds
+
+-   Below we will be allocating 70% of the data for training and 30% for
+    testing
+-   For our cross validation, we will have 5 repetitions and 5 folds
+-   Both will be using the "Usage" variable for stratification
+
+```{r}
+#Data Splitting 
+set.seed(9301)
+steel_split <- initial_split(steel_energy, prop = 0.7, strata = Usage)
+
+steel_train <- training(steel_split)
+steel_test <- testing(steel_split)
+
+#CV Folds 
+set.seed(36492)
+
+steel_folds <- steel_train %>%
+    vfold_cv(v = 5, strata = Usage, repeats = 5)
+```
+
+# **Feature Engineering**
+
+-   In general the concept of featuring engineering is to make the
+    predictor variables easier and better for the model to use
+
+-   Feature engineering includes tasks such as; Log transformation,
+    normalization, dummy variables, discretization etc.
+
+    -   What all these features have in common is that they help make
+        the model work better and more effectively
+
+-   Standardization:
+
+    -   A method for modifying the scale of a predictor
+
+    -   In statistics, transformations are estimated from the training
+        data and are applied to the test data
+
+    -   It is used when the predictor is required to be in common units
+        by the model
+
+-   Basis of Expansion:
+
+    -   When combining predictor functions using a linear combination
+
+    -   We would use linear regression to determine the coefficients,
+        which could be estimated with other regressors
+
+## Creating 3 Recipes
+
+-   *Recipe #1* - In this model we won't be using one hot encoding in
+    our step_dummy() because it doesn't mathematically make a difference
+    since the model should be able to predict even with the missing one
+    hot encoding column, which is all we need in this case
+
+```{r}
+steel_energy_simple_recipe <- recipe(Usage ~ ., data = steel_train) %>% 
+  step_dummy(all_nominal_predictors()) 
+```
+
+-   *Recipe #2* - We have to standardize the response variable because
+    the"usage" variable (response variable) are in different units, when
+    compared to the predictors
+
+-   If I wanted to do this, the code that I would have to use is the
+    "step_normalize" function (like give below)
+
+    -   Inside this function I will add "all_outcomes()" so the function
+        pics up the Usage variable, and not just the predictor
+        variables 
+
+```{r}
+steel_energy_norm_recipe <- steel_energy_simple_recipe %>%  
+  step_normalize(all_numeric_predictors())
+```
+
+-   *Recipe #3*- For the final recipe we will be using the same
+    functions we added above but also add the basis of expansion
+    function 
+
+    -   This function is to create more flexible models (ex.
+        polynomials)
+
+```{r}
+steel_energy_basis_recipe <- steel_energy_norm_recipe %>%
+  step_bs(all_numeric_predictors()) 
+```
+
+# **KNN**
+
+-   KNN models focus on the similarity of other observations when making
+    predictions
+
+-   There is regression (numeric) and classification (characters) modes
+    for the outcomes of these KNN models
+
+-   KNN models are non-parametric because a KNN makes weak assumptions
+    about the functional relationship between predictors and the
+    response variable
+
+    -   Creates more flexibility, which could lead to overfitting the
+        data (one weakness)
+
+-   Another weakness is that KNN models are typically computationally
+    inefficient
+
+-   One strength however is that KNN models are useful for preprocessing
+    purposes
+
+## Create the Model
+
+-   We are telling the model that the neighbors hyperparameter will be
+    tuned later, by using the tune() function *The outcome variable is a
+    quantitative variable, so this makes the mode of the KNN regression,
+    not classification*
+
+```{r}
+knn_model <-
+    nearest_neighbor(neighbors = tune()) %>%
+    set_mode('regression') %>%
+    set_engine('kknn')
+```
+
+## Create the Workflows
+
+-   We create workflows to keep the information needed to fit and
+    predict the model together
+
+*Using recipe 1*
+
+```{r}
+#Workflow 1
+workflow_knn_1 <-
+    workflow() %>%
+    add_recipe(steel_energy_simple_recipe) %>%
+    add_model(knn_model)
+
+workflow_knn_1 %>%
+    parameters
+```
+
+*Using recipe 2*
+
+```{r}
+#Workflow 2
+workflow_knn_2 <-
+    workflow() %>%
+    add_recipe(steel_energy_norm_recipe) %>%
+    add_model(knn_model)
+
+workflow_knn_2 %>%
+    parameters
+```
+
+*Using recipe 3*
+
+```{r}
+#Workflow 3
+workflow_knn_3 <-
+    workflow() %>%
+    add_recipe(steel_energy_basis_recipe) %>%
+    add_model(knn_model)
+
+workflow_knn_3 %>%
+    parameters
+```
+
+## Tune the Models
+
+-   We will now be performing the cross validation by tuning workflows
+    we created above
+-   To minimize the error in the predictions we have added the 3 metrics
+    we set earlier
+-   I have also created the parameter grid for the neighbors we would
+    like to evaluate
+
+```{r}
+knn_grid <- crossing(neighbors = seq(5, 100, 5))
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makeForkCluster(number_of_cores)
+registerDoParallel(cluster)
+
+tuned_knn_1 <-
+    workflow_knn_1 %>%
+    tune_grid(steel_folds,
+        grid = knn_grid,
+        metrics = my_metrics,
+        control = control_resamples(save_pred=TRUE))
+
+tuned_knn_2 <-
+    workflow_knn_2 %>%
+    tune_grid(steel_folds,
+        grid = knn_grid,
+        metrics = my_metrics,
+        control = control_resamples(save_pred=TRUE))
+
+tuned_knn_3 <-
+    workflow_knn_3 %>%
+    tune_grid(steel_folds,
+        grid = knn_grid,
+        metrics = my_metrics,
+        control = control_resamples(save_pred=TRUE))
+
+stopCluster(cluster)
+
+```
+
+## Collect the Performance Metrics
+
+-   I created a list because there was three different types of tuned
+    workflows
+-   I then combined them using the bind_rows() function
+
+```{r}
+knn_list <- list(simple = tuned_knn_1 %>% 
+                   collect_metrics(), 
+                 norm = tuned_knn_2 %>% 
+                   collect_metrics(),
+                 basis = tuned_knn_3 %>% 
+                   collect_metrics())
+
+knn_bind <- bind_rows(knn_list, .id = 'Recipe')
+```
+
+## Plot the Performance Metrics
+
+-   From the graph below we can see that the simple and norm recipes
+    have the same units, meaning that the recipes both create the same
+    outputs in terms of the metrics
+-   We can also see that the 3rd recipe performs better than the first 2
+    -   The best performing overall would be when KNN has close to 10
+        neighbors
+
+```{r}
+knn_bind %>%
+  ggplot(aes(x = neighbors, y = mean, colour = Recipe)) +
+  geom_line() + 
+  facet_wrap(~.metric, scales = 'free', nrow = 2) +
+    labs(title = 'KNN Performance', 
+       x = 'Nieghbours', y = "Average Metric") +
+  theme_minimal() 
+```
+
+## Show the Best Models
+
+-   As mentioned earlier, the RMSE metric is the best one out of the 3
+    for this problem
+
+-   According to the table the best performing RMSE is with the recipe,
+    "basis" (3rd one), and 10 neighbors
+
+    -   I know this because it has the lowest RMSE and standard error
+
+```{r}
+knn_best_list <- list(simple = tuned_knn_1 %>%
+                        show_best(metric='rmse'), 
+                     norm = tuned_knn_2 %>% 
+                       show_best(metric='rmse'),
+                     basis = tuned_knn_3 %>% 
+                       show_best(metric='rmse'))
+knn_best <- bind_rows(knn_best_list, .id = 'Recipe') 
+
+knn_best %>%
+  kable
+```
+
+# **Linear Regression**
+
+-   Similar to the KNN model, since the output variable is numeric it
+    will be a regression model
+-   We will also be tuning the parameters, penalty and mixture, later
+
+```{r}
+lin_reg_model <-
+    linear_reg(penalty = tune(), mixture = tune()) %>%
+    set_mode('regression') %>%
+    set_engine('glmnet')
+```
+
+## Create the Workflows
+
+-   Using the same recipes from KNN, I created 3 workflows for linear
+    regression
+
+```{r}
+#Workflow 1
+workflow_lin_reg_1 <-
+    workflow() %>%
+    add_recipe(steel_energy_simple_recipe) %>%
+    add_model(lin_reg_model)
+
+workflow_lin_reg_1 %>%
+    parameters
+```
+
+```{r}
+#Workflow 2
+workflow_lin_reg_2 <-
+    workflow() %>%
+    add_recipe(steel_energy_norm_recipe) %>%
+    add_model(lin_reg_model)
+
+workflow_lin_reg_2 %>%
+    parameters
+```
+
+```{r}
+#Workflow 3
+workflow_lin_reg_3 <-
+    workflow() %>%
+    add_recipe(steel_energy_basis_recipe) %>%
+    add_model(lin_reg_model)
+
+workflow_lin_reg_3 %>%
+    parameters
+```
+
+## Tune the Models
+
+-   Penalty
+
+    -   A penalty represents the the total amount of regularization/ the
+        strength of regularization we should use 
+
+    -   It is a constraint in the size for the coefficients, such that
+        the only way the coefficient can increase is if we experience a
+        decrease in the sum of squared errors
+
+    -   Penalties help reduce the the impact of variables when there are
+        many, like in this model which has 1 outcome variable and 10
+        response variables
+
+    -   Penalties will reduce the coefficient values
+
+    -   Common penalty parameters we can implement:
+
+        -   Ridge penalty
+
+        -   LASSO
+
+        -   Elastic net (or ENET)
+
+-   Mixture 
+
+    -   A mixture on the other hand use a function which represents the
+        amount of penalties in regularized models
+
+    -   Shows us the blend of regularization types to use
+
+    -   A number between 0 and 1
+
+        -   0 = Ridge Regression Model
+
+        -   1 = Pure Lasso Model
+
+        -   In Between 0-1 = Elastic Net Model, interpolating lasso and
+            ridge
+
+-   Below we creating a parameter grind and will be performing the cross
+    validation for the linear regression workflows by tuning
+
+-   To minimize the error in the predictions we have added the 3 metrics
+    we set earlier
+
+```{r}
+lin_reg_grid <- crossing(penalty = seq(0, 0.3, 0.05),
+                         mixture = c(0, 0.15, 0.25, 0.5, 0.75, 0.85, 1))
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makeForkCluster(number_of_cores)
+registerDoParallel(cluster)
+
+tuned_lin_reg_1 <-
+    workflow_lin_reg_1 %>%
+    tune_grid(steel_folds,
+        grid = lin_reg_grid,
+        metrics = my_metrics,
+        control = control_resamples(save_pred=TRUE))
+
+tuned_lin_reg_2 <-
+    workflow_lin_reg_2 %>%
+    tune_grid(steel_folds,
+        grid = lin_reg_grid,
+        metrics = my_metrics,
+        control = control_resamples(save_pred=TRUE))
+
+tuned_lin_reg_3 <-
+    workflow_lin_reg_3 %>%
+    tune_grid(steel_folds,
+        grid = lin_reg_grid,
+        metrics = my_metrics,
+        control = control_resamples(save_pred=TRUE))
+
+stopCluster(cluster)
+```
+
+## Collect the Performance Metrics
+
+-   I created a list because there was three different types of tuned
+    workflows
+-   I then combined them using the bind_rows() function
+
+```{r}
+lin_reg_list <- list(simple = tuned_lin_reg_1 %>% 
+                   collect_metrics(), 
+                 norm = tuned_lin_reg_2 %>% 
+                   collect_metrics(),
+                 basis = tuned_lin_reg_3 %>% 
+                   collect_metrics())
+
+lin_reg_bind <- bind_rows(lin_reg_list, .id = 'Recipe')
+```
+
+## Plot the Performance Metrics
+
+-   At first glance this plot is very confusing because off all the
+    metrics and the lines (mixture)
+
+-   We will take a closer look at this data using the show_best()
+    function below to get a better understanding
+
+```{r}
+lin_reg_bind %>%
+  ggplot(aes(x = penalty, y = mean, 
+             colour = as_factor(mixture))) +
+  geom_line() + 
+  facet_grid(.metric~Recipe, scales = 'free') +
+    labs(title = 'Linear Regression Performance',
+         y = 'Average Metric',
+       x = 'Penalty') +
+  guides(colour = guide_legend(title = 'Mixture')) +
+  theme_minimal() 
+```
+
+## Show the Best Models
+
+-   As mentioned earlier, the RMSE metric is the best one out of the 3
+    for this problem
+
+-   According to the table the best performing RMSE is with the recipe,
+    "basis" (3rd one), and near 0 for the penalties and 0.75 for the
+    mixture
+
+    -   I know this because it has the lowest RMSE
+
+-   This means that the Elastic Net Model (interpolating lasso and
+    ridge) is the regularization types to use in this model
+
+```{r}
+lin_reg_best_list <- list(simple = tuned_lin_reg_1 %>%
+                        show_best(metric='rmse'), 
+                     norm = tuned_lin_reg_2 %>% 
+                       show_best(metric='rmse'),
+                     basis = tuned_lin_reg_3 %>% 
+                       show_best(metric='rmse'))
+ling_reg_best <- bind_rows(lin_reg_best_list, .id = 'Recipe') 
+
+ling_reg_best %>%
+  kable
+```
+
+# **Select and Assess the Final Model**
+
+## Select the Best Model
+
+-   The best performing model when conducting KNN is when neighbors is
+    10 and when using the 3rd recipe (after adding the basis of
+    expansion)
+
+    -   This model has the lowest RMSE/ MAE, and the highest R\^2 making
+        it the best performing
+
+-   The best performing model when conducting the linear regression is
+    when the penalty is 0 and the mixture is 0.75
+
+## Assess the Final Model
+
+-   Below I will create and fit the training data for the best KNN and
+    linear regression, then I will assess the best performing model on
+    the test data to conclude whether we should use the best of KNN or
+    linear regression
+
+-   Based off just the training data from above I would predict the best
+    model will be the best of the linear regression model
+
+**KNN** - From the below outcome, we can see that the best KNN model is
+indeed the one with 10 neighbors using the 3rd recipe
+
+```{r}
+knn_best <- select_best(tuned_knn_3, metric = 'rmse')
+
+knn_best
+```
+
+-   Based off of the best KNN model, below we have the metrics
+    corresponding to it using the test data
+
+```{r}
+workflow_knn_final <-
+    workflow_knn_3 %>%
+    finalize_workflow(knn_best)
+
+knn_fit_final <-
+    workflow_knn_final %>%
+    fit(steel_train)
+
+knn_predictions <- predict(knn_fit_final, steel_test)
+
+knn_test_metrics <- steel_test %>%
+    bind_cols(knn_predictions)
+
+my_metrics(knn_test_metrics, truth = Usage, estimate = .pred) %>%
+    kable(digits = 2)
+```
+
+**Linear regression** - From the below outcome, we can see that the best
+linear regression model is indeed the one I predicted it to be above
+using the 3rd reipe
+
+```{r}
+lin_reg_best <- tuned_lin_reg_3 %>% 
+  select_best(metric = 'rmse') 
+
+lin_reg_best 
+```
+
+-   Based off of the best linear regression model, below we have the
+    metrics corresponding to it using the test data
+
+```{r}
+workflow_lin_reg_final <-
+    workflow_lin_reg_3 %>%
+    finalize_workflow(lin_reg_best)
+
+lin_reg_fit_final <-
+    workflow_lin_reg_final %>%
+    fit(steel_train)
+
+lin_reg_predictions <- predict(lin_reg_fit_final, steel_test)
+
+lin_reg_test_metrics <- steel_test %>%
+    bind_cols(lin_reg_predictions)
+
+my_metrics(lin_reg_test_metrics, truth = Usage, estimate = .pred) %>%
+    kable(digits = 2)
+
+```
+
+-   When comparing the KNN and linear regression metrics above we can
+    conclude that the linear regression model using recipe 3 (using
+    dummies, standardizing and basis of expansion) with 0 penalties and
+    0.75 mixtures
+-   But we can also conclude that both are very close
+    -   The R\^2 is the exact same
+
+    -   The MAE and RMSE (the metric we will be focusing on for this
+        problem) is better for the linear regression model
+
+        -   They are also both lower for the linear regression model.
+            meaning that the predictions are more accurate with the true
+            values
+
+## Compare Actual and Predicted Values- Linear Regression
+
+-   When looking at the graph we can see that the predicted and actual
+    are relatively correlated (linear), which means that the predictions
+    are good
+-   We also see some outliers on the graph, which should be further
+    examined
+
+```{r}
+collected_predictions <- tuned_lin_reg_3 %>%
+    collect_predictions(parameters = lin_reg_best) 
+
+collected_predictions %>%
+    ggplot(aes(x = Usage, y = .pred)) +
+    geom_point(color = 'skyblue4', alpha = 0.25, size = 0.75) +
+    geom_abline(slope = 1, intercept = 0, size = 0.75,
+                linetype = 'dashed') +
+    labs(title = 'Steel Industry - Actual vs. Predicted Energy Consumption',
+         subtitle = 'Predictions from Cross-validation',
+         x = 'Actual',
+         y = 'Predicted')
+```
+
+## **Conclusion**
+
+1.  ***Which model would you recommend as having the best performance?
+    Briefly describe your process for assessing each model's
+    performance, and for selecting a model with the right amount of
+    flexibility (vs. bias).***
+
+-   As mentioned above, the model that has the best performance is the
+    linear regression model
+
+-   Specifically, when using the third recipe and when the penalties are
+    0 and the mixture is 0.75
+
+-   First I selected the best performing model from each the linear
+    regression and the KNN model
+
+    -   Then, I showed the best performing from the 2 based off the
+        metrics (RMSE, R\^2 and MAE), giving emphasis on the RMSE
+        because I believe it is the most important metric for this
+        problem 
+
+<!-- -->
+
+-   Another reason why I felt that the linear regression model was
+    better was because KNN models typically have too much flexibility/ a
+    high variance and are computationally inefficient
+
+2.  ***Discuss how your results might change by using a different error
+    metric. Comment on why your chosen metric is more intuitive than the
+    other ones.***
+
+    -   If I used the R\^2 metric, then it would be a tie for the best
+        performing model
+
+    -   But ultimately I decided that the RMSE metric was better than
+        the R\^2 in this problem because the RMSE measures accuracy puts
+        more emphasis on large differences
+
+        -   Which is what we need when creating a model that is supposed
+            to predict using historical data
+
+3.  ***How did the data transformations that you applied affect the
+    performance of the models that you evaluated?***
+
+    -   For the KNN model and linear regression model, just adding the
+        standardization function didn't change the data
+
+        -   This may have happened because all the predictor units were
+            the same and this step wasn't needed for the KNN and linear
+            regression 
+
+    -   For the KNN model and linear regression model, adding the basis
+        of expansion function on top of that (3rd recipe) made the model
+        perform better based on all three metrics used 
+
+        -   This may have been because using a linear combination helped
+            reduce errors and make the model increasingly more accurate 
+
+4.  ***With the model that you recommended, are the model results
+    consistently good, or are some outcome ranges not as accurate as
+    other ranges? What is your hypothesis about this problem, and what
+    might be a potential solution?***
+
+    -   From the best performing model (linear regression),
+        mathematically all the results are good
+
+    -   But when fitting the model on the testing data the R\^2 may be
+        too high, at 0.99
+
+        -   This could lead to overfitting the model and too much
+            flexibility/variance 
+
+        -   This could also mean that the model is too optimistic, which
+            isn't a good thing
+
+    -   My hypothesis about this problem is that is came from spending
+        too much data in our training 
+
+    -   Potential solutions include:
+
+        -   We can check to see if data picked up on the noise and not
+            the trend, or we can use cross validation 
+
+        -   We can also spend less data on the training, but not too
+            little because we have to still have good assessment of
+            model parameters  
+
+            -   Spending less data on training also has benefits such
+                as; an increase in computation speed
+
+            -   In general we should use trial and error to make that we
+                are sufficiently spending our data in the right places,
+                even with larger data sets
+
+5.  ***How could you transform this regression problem into a
+    classification problem instead? What response variable would be
+    appropriate for this use case, i.e., predicting energy consumption
+    in the steel industry?***
+
+    -   We can turn this into a classification problem by giving the
+        response variable only two possible outcomes 
+
+    -   For example, we could use the same "usage" variable, but we
+        could mutate it to have binary outcomes 
+
+        -   If the usage is greater than 50 = TRUE 
+
+        -   If usage is less than or equal to 50 = FALSE
+
+    -   If this were the case we could use the metrics:
+
+        -   Accuracy 
+
+        -   Kappa
+
+        -   Precision and Recall
+
+        -   F-score
+
+        -   Sensitivity and Specificity 
+
+    \
+
+\

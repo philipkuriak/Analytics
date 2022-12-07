@@ -1,0 +1,478 @@
+---
+title: "KNN, Logistic Regression and Confusion Matrix"
+author: "Philip Kuriakose"
+output: 
+    html_document: 
+      toc: yes
+      toc_float: yes
+      theme: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(GGally)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+
+
+```
+
+# **Introduction**
+
+-   In this assignment I will be training and testing KNN and logistic
+    regression models
+
+-   We will start with the general preparation/EDA/splitting the data,
+    create the actual models and finally train the models
+
+-   After completing these steps I came to realize that using this bank
+    data, the logistic regression model creates a better prediction mode
+    than the KNN model. Which is why I recommend the bank should use the
+    logistic regression model
+
+# **Preparing the Data**
+
+```{r}
+Bank <- read_csv("bank_10.csv")
+
+glimpse(Bank)
+
+# Reorder so that "yes" comes first
+Bank <- Bank %>%
+  mutate(y = fct_relevel(y, "yes"))
+
+```
+
+# **General Preparation**
+
+## EDA
+
+*Checking the distribution between the "yes" and "no" of the term
+deposit subscription variable*
+
+```{r}
+Bank %>%
+    ggplot(aes(x = y)) +
+    geom_bar() +
+    labs(title = 'Distribution of Term Deposit Subscription') +
+    theme_minimal()
+```
+
+*Draw the plots of all the numeric variables and their relations*
+
+```{r}
+Bank_numeric <- Bank %>%
+    select(duration,campaign, y) %>%
+    ggpairs()
+
+Bank_numeric
+
+```
+
+*Below I have split the categorical variables into multiple subsets so
+that the plots look cleaner and easier to visualize*
+
+```{r}
+Bank_char1 <- Bank %>%
+    select(contact,poutcome,y) %>%
+    ggpairs()
+
+Bank_char1
+```
+
+```{r}
+Bank_char2 <- Bank %>%
+    select(month,job,y) %>%
+    ggpairs()
+
+Bank_char2
+```
+
+```{r}
+Bank_char3 <- Bank %>%
+    select(loan,education,y) %>%
+    ggpairs()
+
+Bank_char3
+```
+
+```{r}
+Bank_char4 <- Bank %>%
+    select(marital,y) %>%
+    ggpairs()
+
+Bank_char4
+```
+
+***Created a density chart for the duration variable***
+
+-   From this I can see that the density of the variable decreases. as
+    the duration increases
+
+```{r}
+Bank %>%
+  ggplot(aes(x=duration)) +
+    geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8)
+
+```
+
+## Metric Set
+
+*I created a set that contains all the metrics needed for this
+assignment*
+
+```{r}
+bank_metrics <- metric_set(accuracy, roc_auc, precision, recall)
+```
+
+## Data Split
+
+```{r}
+set.seed(987)
+#70:30 split between the training and testing set
+Bank_split <- initial_split(Bank, 
+                            prop = 0.7,
+                            strata = y)
+
+Bank_train <- training(Bank_split)
+Bank_test <- testing(Bank_split)
+
+set.seed(654)
+#5 folds, 5 repetitions and stratify the "y" variable 
+Bank_cv <- Bank_train %>% 
+  vfold_cv(v = 5, 
+           strata = y, 
+           repeats = 5)
+
+```
+
+# **KNN**
+
+## Create a Recipe
+
+```{r}
+Bank_recipe <- 
+    recipe(y ~ duration + contact + poutcome + month + job + loan + campaign + education + marital,
+           data = Bank_train)
+```
+
+## Create a Model
+
+*We have to tune the hyperparameters after the cross-validation because
+we are trying to find which amount of neighbors creates the best model*
+
+```{r}
+knn_model <-
+    nearest_neighbor(neighbors = tune()) %>%
+    set_engine('kknn') %>%
+    set_mode('classification')
+```
+
+## Create a Workflow
+
+*Created a workflow to contain the KNN model and the recipe created*
+
+```{r}
+knn_wflow <- 
+  workflow() %>% 
+  add_recipe(Bank_recipe) %>% 
+  add_model(knn_model)
+
+knn_wflow %>% parameters()
+```
+
+## Tune the Model
+
+*Tune the model to find which neighbor (out the sequence created below)
+would be the best fit for the model according the the metrics I set*
+
+```{r}
+knn_hyperpar <- expand_grid(neighbors = 2^seq(1, 8, 1))
+
+tune_knn <-
+  knn_wflow %>%
+  tune_grid(Bank_cv, 
+            grid = knn_hyperpar,
+            metrics = bank_metrics,
+            control = control_resamples(save_pred=TRUE))
+```
+
+## Assess the Performance
+
+-   The default metric was accuracy but this is not useful since there
+    is a big imbalance in the distributions in the y variable (much more
+    no's than yes's)
+-   Instead we can use the ROC AUC metric because it shows the over all
+    probability thresholds, the performance of a classifier
+
+```{r}
+show_best(tune_knn, metric = 'roc_auc') %>%
+  kable(digits = 2)
+```
+
+**Create a graph by neighbors**
+
+```{r}
+autoplot(tune_knn) + 
+    labs(title = 'Plot Models Performance',
+       x = 'Neighbors')
+```
+
+## Results and Interpretation
+
+-   The model that performed the best according to the ROC AUC metric
+    would be the model where the neighbors are 16
+
+    -   This is because in this model the ROC AUC cuts off at 0.85,
+        which would mean this model is the most useful according to this
+        metric 
+
+-   From the precision we can see the fraction of truly positive
+    outcomes out of all the positive outcomes
+
+    -   This means that as the number of neighbors gets higher, the
+        amount of false positive outcomes increases and or, the truly
+        positive outcomes decreases
+
+-   From the recall we see that the fraction of positive predictions
+    among the outcomes that are truly positive
+
+    -   This means that the when the neighbors are from 2 to 64, the
+        number of truly positive outcomes increases
+
+    -   But after 64, as the number of neighbors increases, the truly
+        positive outcomes decrease
+
+-   The accuracy for this model is not useless for all the models 
+
+    -   Since only about 13% of the customers have subscribed to the
+        term deposit, some of the neighbors (neighbors = 2 and 4) the
+        accuracy is only 87%, which is not good because only 13% have
+        subscribed. This would mean 87% have not subscribed and so
+        therefore the accuracy is not useful for assessing this model
+
+    -   But the neighbors where the accuracy is above 87%, the accuracy
+        is useful for those models
+
+    -   In general we should not be focusing on the accuracy in the
+        presence of a real class imbalance, which in this case our
+        outcome variable (y) has
+
+## Confusion Matrix
+
+*This table will show us the predictions against the actual values, the
+metric that will be used is ROC AUC*
+
+```{r}
+conf_best <- select_best(tune_knn, metric = 'roc_auc')
+
+tune_knn %>% 
+  conf_mat_resampled(parameters = conf_best)
+```
+
+-   The re-sampled confusion matrix creates a separate confusion matrix
+    with the actual and predicted values for each resample, then it
+    averages the cell counts (freq)
+-   The biggest problem with this model is that there are a lot more
+    true/predicted no's than there are yes's
+    -   This becomes a problem because we are focusing on the customers
+        who subscribe to a term loan (yes), but the data is more useful
+        for "no", since there is more of that
+-   As mentioned previously I will be focusing on the ROC AUC of the
+    model because I believe this is the best metric to use since it also
+    shows the probability
+
+# **Logistic Regression**
+
+## Create a Recipe
+
+```{r}
+Bank_recipe1 <- recipe(y ~ duration + contact + poutcome + month + job + loan + campaign + education + marital, data = Bank_train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+```
+
+## Create a Model
+
+```{r}
+log_reg_model <- 
+    logistic_reg(penalty = tune(), mixture = 1) %>%
+    set_engine("glmnet")
+```
+
+## Create a Workflow
+
+```{r}
+log_reg_wflow <- 
+  workflow() %>% 
+  add_recipe(Bank_recipe1) %>% 
+  add_model(log_reg_model)
+
+log_reg_wflow %>% parameters()
+```
+
+## Tune the Model
+
+-   In logistic regression we will be tuning the model with penalties in
+    between 0 and 0.1
+
+    -   Penalties will constraint the size of the coefficients such that
+        the only way this will increase this is if there is a decrease
+        in the sum of squared errors
+
+```{r}
+log_reg_hyperpar <- expand_grid(penalty= seq(0, 0.1, 0.025))
+
+tune_log_reg <-
+  log_reg_wflow %>%
+  tune_grid(Bank_cv, 
+            grid = log_reg_hyperpar,
+            metrics = bank_metrics,
+            control = control_resamples(save_pred=TRUE))
+```
+
+## Assess the Performance
+
+-   We will again be using the ROC AUC metric because we think it is the
+    best metric to use for this model (same reasoning as in the KNN
+    model)
+
+```{r}
+show_best(tune_log_reg, metric = 'roc_auc') %>%
+  kable(digits = 2)
+```
+
+**Create a graph by Penalty**
+
+```{r}
+autoplot(tune_log_reg) + 
+    labs(title = 'Plot Models Performance',
+       x = 'Penalty')
+```
+
+## Confusion Matrix
+
+*This table will show us the predictions against the actual values, the
+metric that will be used is ROC AUC*
+
+```{r}
+conf_best_log <- select_best(tune_log_reg, metric = 'roc_auc')
+
+tune_log_reg %>% 
+  conf_mat_resampled(parameters = conf_best_log)
+```
+
+## Results and Interpretation
+
+-   The model with better overall performance would be Logistic
+    Regression model, which we will be using for the test (below)
+
+    -   The reason for this is because in the logistic regression model
+        there are more true/predicted yes's, which is what we want in
+        our model for better results since we are focusing on the
+        clients who subscribed to the term deposit
+
+-   The accuracy of the logistic regression model is also higher for all
+    the neighbors and for this model the accuracy is useful for
+    assessing the model because accuracy is over 87%
+
+-   The ROC AUC metric is also higher for all the models when using
+    logistic regression (closer to the "L" shape), which means this
+    model has better overall performance
+
+    -   From the graph we can see that the higher the number of
+        penalties is, the ROC AUC amount decreases, which means the
+        logistic regression model performs better with less constraints
+
+# **Test and Fit the Final Model**
+
+```{r}
+fit_log_regression <- log_reg_wflow %>%
+  finalize_workflow(conf_best_log) %>%
+  fit(Bank_train) 
+```
+
+## Predict
+
+```{r}
+
+predict_log_reg <- predict(fit_log_regression, new_data = Bank_test, type = "prob")
+
+Bank_test_bind <- Bank_test %>%
+  bind_cols(predict_log_reg)
+
+Bank_test_bind
+
+```
+
+*Predict the "Yes"*
+
+```{r}
+Bank_test_prob_yes <- Bank_test_bind %>%
+  roc_auc(truth = y, .pred_yes)  
+
+Bank_test_prob_yes
+```
+
+*Confusion matrix Prediction*
+
+```{r}
+predict_conf <- predict(fit_log_regression, new_data = Bank_test)
+
+Bank_test_conf_bind <- Bank_test %>%
+  bind_cols(predict_conf)
+
+Bank_test_conf_bind
+```
+
+*Confusion Matrix*
+
+*This table will show us the predictions against the actual values, the
+metric that will be used is ROC AUC*
+
+```{r}
+Bank_test_conf <- Bank_test_conf_bind %>%
+  conf_mat(truth = y, estimate = .pred_class)
+
+Bank_test_conf
+
+```
+
+-   When comparing the cross validation error metrics with the training
+    and testing data we see that there are more correctly predicted
+    yes's in the training data, but this is due to the training set
+    being bigger
+
+-   In terms of the percentage of correctly predicted yes's and no's,
+    they are relatively the same in both the training and testing data
+    sets
+
+    -   This means that these data sets are consistent with each other
+
+-   In both data sets there also more falsely predicted no's than
+    falsely predicted yes's
+
+-   One part of the final model prediction I would recommend enhancing
+    is increasing the number of "yes's" in the term deposit subscription
+    variable (y)
+
+    -   This would help the company create better and more accurate
+        models for predicting if the customer will sign up for the term
+        deposit
+
+-   I would also look more into the correlations between the predictor
+    variables and the outcome variables to see which ones are useful
+    when creating the model
+
+    -   This way we are creating the best model we can to get the most
+        accurate predictions
